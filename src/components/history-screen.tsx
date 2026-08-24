@@ -1,3 +1,5 @@
+"use client";
+
 import { Link } from "@/lib/navigation";
 import { FileClock, MessageSquarePlus } from "lucide-react";
 import { AppShell } from "@/components/app-shell";

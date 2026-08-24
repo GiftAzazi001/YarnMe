@@ -9,11 +9,11 @@ import {
   languageSchema,
   type AnalysisResult,
   type LanguageCode,
-} from "../lib/analysis.ts";
+} from "@/lib/analysis";
 import {
   getGeminiModelConfig,
   type GeminiModelRole,
-} from "../lib/gemini-models.ts";
+} from "@/lib/gemini-models";
 
 const TIMEOUT_MS = 30000;
 const TRANSIENT_GEMINI_STATUSES = new Set([429, 500, 502, 503, 504]);

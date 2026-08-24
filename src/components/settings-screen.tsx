@@ -1,3 +1,5 @@
+"use client";
+
 import { useState } from "react";
 import { Check, Globe2, Languages, Megaphone } from "lucide-react";
 import { AppShell } from "@/components/app-shell";

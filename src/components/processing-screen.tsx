@@ -1,3 +1,5 @@
+"use client";
+
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "@/lib/navigation";
 import { FileText, Sparkles } from "lucide-react";

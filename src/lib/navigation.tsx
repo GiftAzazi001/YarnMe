@@ -1,85 +1,27 @@
-import React, {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useState,
-  type AnchorHTMLAttributes,
-  type ReactNode,
-} from "react";
+"use client";
 
-type RouterContextType = {
-  pathname: string;
-  push: (href: string) => void;
-  replace: (href: string) => void;
-  back: () => void;
-};
-
-const NavigationContext = createContext<RouterContextType>({
-  pathname: "/",
-  push: () => {},
-  replace: () => {},
-  back: () => {},
-});
-
-export function NavigationProvider({ children }: { children: ReactNode }) {
-  const [pathname, setPathname] = useState(() => {
-    if (typeof window !== "undefined") {
-      return window.location.pathname || "/";
-    }
-    return "/";
-  });
-
-  useEffect(() => {
-    const handlePopState = () => {
-      setPathname(window.location.pathname || "/");
-    };
-
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
-
-  const push = useCallback((href: string) => {
-    if (typeof window !== "undefined") {
-      window.history.pushState(null, "", href);
-      setPathname(window.location.pathname || href);
-      window.scrollTo(0, 0);
-    }
-  }, []);
-
-  const replace = useCallback((href: string) => {
-    if (typeof window !== "undefined") {
-      window.history.replaceState(null, "", href);
-      setPathname(window.location.pathname || href);
-      window.scrollTo(0, 0);
-    }
-  }, []);
-
-  const back = useCallback(() => {
-    if (typeof window !== "undefined") {
-      window.history.back();
-    }
-  }, []);
-
-  return (
-    <NavigationContext.Provider value={{ pathname, push, replace, back }}>
-      {children}
-    </NavigationContext.Provider>
-  );
-}
+import NextLink from "next/link";
+import {
+  usePathname as useNextPathname,
+  useRouter as useNextRouter,
+} from "next/navigation";
+import React, { type AnchorHTMLAttributes, type ReactNode } from "react";
 
 export function useRouter() {
-  const context = useContext(NavigationContext);
+  const router = useNextRouter();
   return {
-    push: context.push,
-    replace: context.replace,
-    back: context.back,
+    push: (href: string) => router.push(href),
+    replace: (href: string) => router.replace(href),
+    back: () => router.back(),
+    forward: () => router.forward(),
+    refresh: () => router.refresh(),
+    prefetch: (href: string) => router.prefetch(href),
   };
 }
 
-export function usePathname() {
-  const context = useContext(NavigationContext);
-  return context.pathname;
+export function usePathname(): string {
+  const pathname = useNextPathname();
+  return pathname || "/";
 }
 
 export type LinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
@@ -88,25 +30,17 @@ export type LinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
   replace?: boolean;
 };
 
-export function Link({ href, children, onClick, replace = false, ...props }: LinkProps) {
-  const router = useRouter();
-
-  const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
-    if (onClick) onClick(e);
-    if (!e.defaultPrevented && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && props.target !== "_blank") {
-      e.preventDefault();
-      if (replace) {
-        router.replace(href);
-      } else {
-        router.push(href);
-      }
-    }
-  };
-
+export function Link({
+  href,
+  children,
+  replace = false,
+  className,
+  ...props
+}: LinkProps) {
   return (
-    <a href={href} onClick={handleClick} {...props}>
+    <NextLink href={href} replace={replace} className={className} {...props}>
       {children}
-    </a>
+    </NextLink>
   );
 }
 

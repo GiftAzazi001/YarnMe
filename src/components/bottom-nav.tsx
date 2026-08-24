@@ -1,3 +1,5 @@
+"use client";
+
 import { Link, usePathname } from "@/lib/navigation";
 import { History, MessageSquare, Settings } from "lucide-react";
 
