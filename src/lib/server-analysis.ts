@@ -637,8 +637,15 @@ export async function handleAnalyzeRequest(body: unknown): Promise<{
   const ai = getGeminiClient();
 
   const candidateModels = Array.from(
-    new Set([models.primary, models.fallback, models.advanced, "gemini-flash-latest", "gemini-3.1-flash-lite"]),
-  ).filter(Boolean);
+    new Set([
+      "gemini-3.1-flash-lite",
+      models.primary,
+      models.fallback,
+      "gemini-flash-latest",
+      models.advanced,
+      "gemini-3.7-flash",
+    ]),
+  ).filter((m): m is string => typeof m === "string" && m.startsWith("gemini-"));
 
   let lastError: unknown = null;
   let successfulResponse: {
@@ -771,8 +778,15 @@ export async function handleAskRequest(body: unknown): Promise<{
   const ai = getGeminiClient();
 
   const candidateModels = Array.from(
-    new Set([models.primary, models.fallback, models.advanced, "gemini-flash-latest", "gemini-3.1-flash-lite"]),
-  ).filter(Boolean);
+    new Set([
+      "gemini-3.1-flash-lite",
+      models.primary,
+      models.fallback,
+      "gemini-flash-latest",
+      models.advanced,
+      "gemini-3.7-flash",
+    ]),
+  ).filter((m): m is string => typeof m === "string" && m.startsWith("gemini-"));
 
   for (const currentModel of candidateModels) {
     try {
