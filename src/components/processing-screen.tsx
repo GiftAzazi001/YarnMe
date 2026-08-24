@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "@/lib/navigation";
-import { FileText, Sparkles } from "lucide-react";
+import { AlertCircle, FileText, Loader2, Sparkles } from "lucide-react";
 import { Logo } from "@/components/logo";
 import { Button } from "@/components/ui";
 import { analyzeResponseSchema } from "@/lib/analysis";
@@ -21,6 +21,7 @@ const messages = [
 export function ProcessingScreen() {
   const [messageIndex, setMessageIndex] = useState(0);
   const [error, setError] = useState("");
+  const [isRetrying, setIsRetrying] = useState(false);
   const router = useRouter();
   const started = useRef(false);
 
@@ -38,10 +39,10 @@ export function ProcessingScreen() {
     if (started.current) return;
     started.current = true;
 
-    async function analyze() {
+    async function runAnalysis() {
       const pending = readPendingAnalysis();
-      if (!pending) {
-        setError("Paste some text first so YarnMe can explain it.");
+      if (!pending || !pending.sourceText?.trim()) {
+        setError("No text found to explain. Please paste your notice first.");
         return;
       }
 
@@ -77,20 +78,39 @@ export function ProcessingScreen() {
         }
 
         const elapsed = Date.now() - startedAt;
-        if (elapsed < 1200) {
-          await new Promise((resolve) => window.setTimeout(resolve, 1200 - elapsed));
+        if (elapsed < 1000) {
+          await new Promise((resolve) => window.setTimeout(resolve, 1000 - elapsed));
         }
 
         saveAnalysisResult(parsed.data);
         clearPendingAnalysis();
-        router.push("/result");
-      } catch {
-        setError("YarnMe could not explain this right now. Please try again.");
+
+        try {
+          router.push("/result");
+        } catch {
+          if (typeof window !== "undefined") {
+            window.location.href = "/result";
+          }
+        }
+      } catch (err) {
+        console.error("Analysis fetch failed:", err);
+        setError("YarnMe could not explain this right now. Please check your connection and try again.");
       }
     }
 
-    void analyze();
+    void runAnalysis();
   }, [router]);
+
+  function handleRetry() {
+    setIsRetrying(true);
+    try {
+      router.push("/");
+    } catch {
+      if (typeof window !== "undefined") {
+        window.location.href = "/";
+      }
+    }
+  }
 
   return (
     <div className="ambient-pulse flex min-h-dvh flex-col justify-between overflow-hidden bg-background">
@@ -149,16 +169,24 @@ export function ProcessingScreen() {
 
           {error ? (
             <div className="mt-xl flex w-full max-w-sm flex-col items-center gap-md text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-error/10 text-error">
+                <AlertCircle size={28} />
+              </div>
               <p className="text-headline-md font-semibold text-on-background">
                 Something did not work
               </p>
               <p className="text-body-md text-on-surface-variant">{error}</p>
               <Button
-                variant="secondary"
-                className="h-14 rounded-full"
-                onClick={() => router.push("/")}
+                variant="primary"
+                className="h-14 rounded-full px-xl"
+                onClick={handleRetry}
+                disabled={isRetrying}
               >
-                Try again
+                {isRetrying ? (
+                  <Loader2 className="animate-spin" size={20} />
+                ) : (
+                  "Try again"
+                )}
               </Button>
             </div>
           ) : (

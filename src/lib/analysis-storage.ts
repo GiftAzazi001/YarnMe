@@ -1,6 +1,7 @@
 import {
   type AnalyzeResponse,
   type LanguageCode,
+  type PendingAnalysis,
   pendingAnalysisSchema,
 } from "@/lib/analysis";
 import {
@@ -11,37 +12,94 @@ import {
 const PENDING_KEY = "yarnme:pending-analysis";
 const RESULT_KEY = "yarnme:analysis-result";
 
-export function savePendingAnalysis(sourceText: string, language: LanguageCode) {
-  if (typeof window === "undefined") return;
-  window.sessionStorage.setItem(
-    PENDING_KEY,
-    JSON.stringify({
-      sourceText,
-      language,
-      createdAt: new Date().toISOString(),
-    }),
-  );
+// In-memory fallback in case browser storage is restricted or throws SecurityError
+let inMemoryPending: PendingAnalysis | null = null;
+let inMemoryResult: NormalizedStoredAnalysis | null = null;
+
+function safeGetItem(key: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const sessionVal = window.sessionStorage?.getItem(key);
+    if (sessionVal) return sessionVal;
+  } catch {
+    // Session storage restricted
+  }
+  try {
+    const localVal = window.localStorage?.getItem(key);
+    if (localVal) return localVal;
+  } catch {
+    // Local storage restricted
+  }
+  return null;
 }
 
-export function readPendingAnalysis() {
-  if (typeof window === "undefined") return null;
-  const raw = window.sessionStorage.getItem(PENDING_KEY);
+function safeSetItem(key: string, value: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage?.setItem(key, value);
+  } catch {
+    // Ignore session storage error
+  }
+  try {
+    window.localStorage?.setItem(key, value);
+  } catch {
+    // Ignore local storage error
+  }
+}
+
+function safeRemoveItem(key: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage?.removeItem(key);
+  } catch {
+    // Ignore
+  }
+  try {
+    window.localStorage?.removeItem(key);
+  } catch {
+    // Ignore
+  }
+}
+
+export function savePendingAnalysis(sourceText: string, language: LanguageCode) {
+  const pendingObj: PendingAnalysis = {
+    sourceText,
+    language,
+    createdAt: new Date().toISOString(),
+  };
+  inMemoryPending = pendingObj;
+  safeSetItem(PENDING_KEY, JSON.stringify(pendingObj));
+}
+
+export function readPendingAnalysis(): PendingAnalysis | null {
+  if (inMemoryPending) {
+    return inMemoryPending;
+  }
+  const raw = safeGetItem(PENDING_KEY);
   if (!raw) return null;
   try {
-    return pendingAnalysisSchema.parse(JSON.parse(raw));
+    const parsed = pendingAnalysisSchema.parse(JSON.parse(raw));
+    inMemoryPending = parsed;
+    return parsed;
   } catch {
     return null;
   }
 }
 
 export function clearPendingAnalysis() {
-  if (typeof window === "undefined") return;
-  window.sessionStorage.removeItem(PENDING_KEY);
+  inMemoryPending = null;
+  safeRemoveItem(PENDING_KEY);
 }
 
 export function saveAnalysisResult(result: AnalyzeResponse) {
-  if (typeof window === "undefined") return;
-  window.sessionStorage.setItem(
+  const normalized = normalizeStoredAnalysisForDisplay({
+    ...result,
+    createdAt: new Date().toISOString(),
+  });
+  if (normalized) {
+    inMemoryResult = normalized;
+  }
+  safeSetItem(
     RESULT_KEY,
     JSON.stringify({
       ...result,
@@ -51,8 +109,10 @@ export function saveAnalysisResult(result: AnalyzeResponse) {
 }
 
 export function readAnalysisResult(): NormalizedStoredAnalysis | null {
-  if (typeof window === "undefined") return null;
-  const raw = window.sessionStorage.getItem(RESULT_KEY);
+  if (inMemoryResult) {
+    return inMemoryResult;
+  }
+  const raw = safeGetItem(RESULT_KEY);
   if (!raw) return null;
   try {
     const result = normalizeStoredAnalysisForDisplay(JSON.parse(raw));
@@ -60,6 +120,7 @@ export function readAnalysisResult(): NormalizedStoredAnalysis | null {
       clearAnalysisResult();
       return null;
     }
+    inMemoryResult = result;
     return result;
   } catch {
     clearAnalysisResult();
@@ -68,6 +129,6 @@ export function readAnalysisResult(): NormalizedStoredAnalysis | null {
 }
 
 export function clearAnalysisResult() {
-  if (typeof window === "undefined") return;
-  window.sessionStorage.removeItem(RESULT_KEY);
+  inMemoryResult = null;
+  safeRemoveItem(RESULT_KEY);
 }
