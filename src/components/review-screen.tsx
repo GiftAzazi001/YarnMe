@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useRouter } from "@/lib/navigation";
 import {
   AlertTriangle,
@@ -15,8 +15,7 @@ import {
 import { AppShell } from "@/components/app-shell";
 import { Button } from "@/components/ui";
 import { type LanguageCode } from "@/lib/analysis";
-import { readAnalysisResult } from "@/lib/analysis-storage";
-import { type NormalizedStoredAnalysis } from "@/lib/analysis-normalization";
+import { useYarnContext } from "@/lib/yarn-context";
 
 const copy: Record<
   LanguageCode,
@@ -104,26 +103,16 @@ const copy: Record<
 };
 
 export function ReviewScreen() {
-  const [stored, setStored] = useState<NormalizedStoredAnalysis | null>(null);
+  const { analysisResult } = useYarnContext();
   const [sheetOpen, setSheetOpen] = useState(false);
   const [correction, setCorrection] = useState("");
   const [submitted, setSubmitted] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  const [showOriginal, setShowOriginal] = useState(false);
   const router = useRouter();
 
-  useEffect(() => {
-    const timeout = window.setTimeout(() => {
-      const result = readAnalysisResult();
-      setStored(result);
-      setLoaded(true);
-    }, 0);
-
-    return () => window.clearTimeout(timeout);
-  }, []);
-
-  const language = stored?.language ?? "hausa";
+  const language = analysisResult?.language ?? "pidgin";
   const activeCopy = copy[language];
-  const uncertainty = stored?.analysis.uncertainties[0];
+  const uncertainty = analysisResult?.analysis.uncertainties[0];
 
   function closeSheet() {
     setSheetOpen(false);
@@ -131,7 +120,7 @@ export function ReviewScreen() {
     setCorrection("");
   }
 
-  if (loaded && (!stored || !uncertainty)) {
+  if (!analysisResult || !uncertainty) {
     return (
       <AppShell header="brand">
         <section className="flex min-h-[calc(100dvh-220px)] flex-col items-center justify-center py-xl text-center">
@@ -145,21 +134,11 @@ export function ReviewScreen() {
             {activeCopy.noReviewBody}
           </p>
           <Link
-            href={stored ? "/result" : "/"}
+            href={analysisResult ? "/result" : "/"}
             className="touch-target mt-xl inline-flex items-center justify-center rounded-full bg-primary px-lg text-label-lg font-semibold text-on-primary shadow-soft transition hover:bg-primary-container active:scale-95"
           >
             {activeCopy.backToResult}
           </Link>
-        </section>
-      </AppShell>
-    );
-  }
-
-  if (!stored || !uncertainty) {
-    return (
-      <AppShell header="none">
-        <section className="py-xl text-center text-body-md text-on-surface-variant">
-          Loading...
         </section>
       </AppShell>
     );
@@ -201,7 +180,7 @@ export function ReviewScreen() {
             <FileText aria-hidden="true" size={16} />
             {activeCopy.snippet}
           </h3>
-          <p className="text-body-lg leading-relaxed text-on-surface">
+          <p className="text-body-lg leading-relaxed text-on-surface font-semibold">
             &quot;{uncertainty.text}&quot;
           </p>
           <div className="mt-md border-t border-surface-variant/50 pt-md">
@@ -209,18 +188,17 @@ export function ReviewScreen() {
               {activeCopy.explanation}
             </p>
             <p className="text-body-md italic text-on-surface-variant">
-              &quot;{stored.analysis.meaning}&quot;
+              &quot;{analysisResult.analysis.meaning}&quot;
             </p>
           </div>
         </div>
       </section>
 
-      <section className="mt-lg flex items-start gap-sm rounded-lg border border-error/10 bg-error-container p-md text-on-error-container shadow-soft">
+      <section className="mt-lg flex items-start gap-sm rounded-lg border border-error/10 bg-error/10 p-md text-on-surface shadow-soft">
         <Info
           aria-hidden="true"
           className="mt-0.5 shrink-0 text-error"
           size={22}
-          fill="currentColor"
         />
         <p className="text-body-md">
           {activeCopy.alertPrefix} {uncertainty.reason}
@@ -236,12 +214,27 @@ export function ReviewScreen() {
           className="h-14 w-full rounded-full"
         >
           <Pencil aria-hidden="true" size={20} />
-          {activeCopy.suggest}
+          <span>{activeCopy.suggest}</span>
         </Button>
-        <Button variant="secondary" className="h-14 w-full rounded-full">
+        <Button
+          variant="secondary"
+          onClick={() => setShowOriginal((prev) => !prev)}
+          className="h-14 w-full rounded-full"
+        >
           <Eye aria-hidden="true" size={20} />
-          {activeCopy.original}
+          <span>{showOriginal ? "Hide original" : activeCopy.original}</span>
         </Button>
+
+        {showOriginal && (
+          <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-md">
+            <p className="text-label-sm font-semibold uppercase text-primary mb-xs">
+              Original Notice
+            </p>
+            <p className="text-body-md whitespace-pre-wrap text-on-surface italic">
+              {analysisResult.sourceText}
+            </p>
+          </div>
+        )}
       </section>
 
       {sheetOpen ? (
@@ -278,7 +271,7 @@ export function ReviewScreen() {
                   </p>
                   <div className="rounded-lg border border-surface-variant/30 bg-surface-container-low p-sm">
                     <p className="text-body-md text-on-surface-variant">
-                      &quot;{stored.analysis.meaning}&quot;
+                      &quot;{analysisResult.analysis.meaning}&quot;
                     </p>
                   </div>
                 </div>
@@ -294,8 +287,9 @@ export function ReviewScreen() {
                     id="correction"
                     value={correction}
                     onChange={(event) => setCorrection(event.target.value)}
-                    className="min-h-[170px] w-full flex-1 resize-none rounded-lg border-2 border-outline-variant bg-surface-bright p-md text-body-lg text-on-surface transition focus:border-primary focus:ring-0"
+                    className="min-h-[170px] w-full flex-1 resize-none rounded-lg border-2 border-outline-variant bg-surface p-md text-body-lg text-on-surface transition focus:border-primary focus:ring-0"
                     spellCheck={false}
+                    placeholder="Type the corrected or clearer explanation..."
                   />
                 </div>
 
@@ -304,6 +298,7 @@ export function ReviewScreen() {
                     if (correction.trim()) setSubmitted(true);
                   }}
                   className="h-14 w-full rounded-full"
+                  disabled={!correction.trim()}
                 >
                   {activeCopy.send}
                 </Button>
@@ -311,7 +306,7 @@ export function ReviewScreen() {
             ) : (
               <div className="flex flex-col items-center justify-center px-container-margin py-xl text-center">
                 <div className="mx-auto mb-md flex h-20 w-20 items-center justify-center rounded-full bg-primary-container text-on-primary-container">
-                  <CheckCircle2 aria-hidden="true" size={44} fill="currentColor" />
+                  <CheckCircle2 aria-hidden="true" size={44} />
                 </div>
                 <h2 className="mb-sm text-headline-md font-semibold">
                   {activeCopy.thanks}

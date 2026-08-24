@@ -5,112 +5,73 @@ import { useRouter } from "@/lib/navigation";
 import { AlertCircle, FileText, Loader2, Sparkles } from "lucide-react";
 import { Logo } from "@/components/logo";
 import { Button } from "@/components/ui";
-import { analyzeResponseSchema } from "@/lib/analysis";
-import {
-  clearPendingAnalysis,
-  readPendingAnalysis,
-  saveAnalysisResult,
-} from "@/lib/analysis-storage";
+import { useYarnContext } from "@/lib/yarn-context";
+import { devTestInputs } from "@/lib/dev-test-inputs";
 
 const messages = [
-  "Reading your information…",
+  "Reading your notice…",
   "Finding what matters…",
   "Making it easier to understand…",
+  "Translating to your language…",
 ];
 
 export function ProcessingScreen() {
   const [messageIndex, setMessageIndex] = useState(0);
-  const [error, setError] = useState("");
-  const [isRetrying, setIsRetrying] = useState(false);
   const router = useRouter();
-  const started = useRef(false);
+  const {
+    sourceText,
+    language,
+    isAnalyzing,
+    analysisResult,
+    error,
+    setError,
+    runAnalysis,
+    loadSample,
+  } = useYarnContext();
+
+  const executedRef = useRef(false);
 
   useEffect(() => {
-    const messageTimer = window.setInterval(() => {
+    const timer = window.setInterval(() => {
       setMessageIndex((current) => (current + 1) % messages.length);
     }, 1400);
 
-    return () => {
-      window.clearInterval(messageTimer);
-    };
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
-    if (started.current) return;
-    started.current = true;
-
-    async function runAnalysis() {
-      const pending = readPendingAnalysis();
-      if (!pending || !pending.sourceText?.trim()) {
-        setError("No text found to explain. Please paste your notice first.");
-        return;
-      }
-
-      try {
-        const startedAt = Date.now();
-        const response = await fetch("/api/analyze", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sourceText: pending.sourceText,
-            language: pending.language,
-          }),
-        });
-
-        const payload: unknown = await response.json().catch(() => null);
-
-        if (!response.ok) {
-          const message =
-            payload &&
-            typeof payload === "object" &&
-            "error" in payload &&
-            typeof payload.error === "string"
-              ? payload.error
-              : "YarnMe could not explain this right now. Please try again.";
-          setError(message);
-          return;
-        }
-
-        const parsed = analyzeResponseSchema.safeParse(payload);
-        if (!parsed.success) {
-          setError("YarnMe received an unclear response. Please try again.");
-          return;
-        }
-
-        const elapsed = Date.now() - startedAt;
-        if (elapsed < 1000) {
-          await new Promise((resolve) => window.setTimeout(resolve, 1000 - elapsed));
-        }
-
-        saveAnalysisResult(parsed.data);
-        clearPendingAnalysis();
-
-        try {
-          router.push("/result");
-        } catch {
-          if (typeof window !== "undefined") {
-            window.location.href = "/result";
-          }
-        }
-      } catch (err) {
-        console.error("Analysis fetch failed:", err);
-        setError("YarnMe could not explain this right now. Please check your connection and try again.");
-      }
+    // If we already have a result, go straight to result screen
+    if (analysisResult && !isAnalyzing) {
+      router.push("/result");
+      return;
     }
 
-    void runAnalysis();
-  }, [router]);
+    // If analysis hasn't started yet and we have text, start it
+    if (!executedRef.current && sourceText.trim() && !isAnalyzing) {
+      executedRef.current = true;
+      runAnalysis(sourceText, language).then((success) => {
+        if (success) {
+          router.push("/result");
+        }
+      });
+    }
+  }, [analysisResult, isAnalyzing, sourceText, language, runAnalysis, router]);
 
-  function handleRetry() {
-    setIsRetrying(true);
-    try {
-      router.push("/");
-    } catch {
-      if (typeof window !== "undefined") {
-        window.location.href = "/";
-      }
+  async function handleTrySample() {
+    loadSample(0);
+    executedRef.current = true;
+    const success = await runAnalysis(devTestInputs[0].text, language);
+    if (success) {
+      router.push("/result");
     }
   }
+
+  function handleBackHome() {
+    setError(null);
+    router.push("/");
+  }
+
+  const hasNoText = !sourceText.trim() && !isAnalyzing;
 
   return (
     <div className="ambient-pulse flex min-h-dvh flex-col justify-between overflow-hidden bg-background">
@@ -123,14 +84,14 @@ export function ProcessingScreen() {
       <main className="mx-auto flex w-full max-w-[720px] flex-1 flex-col items-center justify-center px-container-margin pb-xl">
         <div className="mb-xl flex w-full max-w-sm items-center gap-sm rounded-xl border border-outline-variant/30 bg-surface p-md opacity-90 shadow-soft">
           <div className="flex rounded-lg bg-surface-container-high p-xs text-primary">
-            <FileText aria-hidden="true" size={28} fill="currentColor" />
+            <FileText aria-hidden="true" size={28} />
           </div>
           <div className="min-w-0 flex-1">
             <p className="truncate text-label-lg font-semibold text-on-surface">
-              Pasted information
+              {sourceText ? "Notice loaded" : "No notice text"}
             </p>
             <p className="mt-xs text-label-sm text-on-surface-variant">
-              Text • Processing...
+              {isAnalyzing ? "Processing..." : error ? "Needs attention" : "Ready"}
             </p>
           </div>
         </div>
@@ -176,18 +137,55 @@ export function ProcessingScreen() {
                 Something did not work
               </p>
               <p className="text-body-md text-on-surface-variant">{error}</p>
-              <Button
-                variant="primary"
-                className="h-14 rounded-full px-xl"
-                onClick={handleRetry}
-                disabled={isRetrying}
-              >
-                {isRetrying ? (
-                  <Loader2 className="animate-spin" size={20} />
-                ) : (
-                  "Try again"
-                )}
-              </Button>
+              <div className="flex flex-col gap-xs w-full">
+                <Button
+                  variant="primary"
+                  className="h-14 rounded-full px-xl w-full"
+                  onClick={() => {
+                    executedRef.current = false;
+                    void runAnalysis(sourceText, language).then((s) => s && router.push("/result"));
+                  }}
+                  disabled={isAnalyzing}
+                >
+                  {isAnalyzing ? (
+                    <Loader2 className="animate-spin" size={20} />
+                  ) : (
+                    "Try again"
+                  )}
+                </Button>
+                <button
+                  type="button"
+                  onClick={handleBackHome}
+                  className="text-label-md text-on-surface-variant hover:text-primary py-xs"
+                >
+                  Edit notice text
+                </button>
+              </div>
+            </div>
+          ) : hasNoText ? (
+            <div className="mt-xl flex w-full max-w-sm flex-col items-center gap-md text-center">
+              <p className="text-headline-md font-semibold text-on-background">
+                No notice found to explain
+              </p>
+              <p className="text-body-md text-on-surface-variant">
+                You can try a sample notice or go back to paste your own.
+              </p>
+              <div className="flex flex-col gap-sm w-full">
+                <Button
+                  variant="primary"
+                  className="h-14 rounded-full px-xl w-full"
+                  onClick={() => void handleTrySample()}
+                >
+                  Try sample notice
+                </Button>
+                <Button
+                  variant="secondary"
+                  className="h-12 rounded-full px-xl w-full"
+                  onClick={handleBackHome}
+                >
+                  Paste your notice
+                </Button>
+              </div>
             </div>
           ) : (
             <>
@@ -197,8 +195,7 @@ export function ProcessingScreen() {
                 </p>
               </div>
               <p className="max-w-[280px] text-center text-body-md text-on-surface-variant">
-                Just relax. It won&apos;t take long. We are making sure
-                everything is clear.
+                Just relax. It won&apos;t take long. YarnMe is translating and organizing everything.
               </p>
             </>
           )}

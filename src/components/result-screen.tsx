@@ -4,14 +4,17 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useRouter } from "@/lib/navigation";
 import {
   AlertTriangle,
+  Building2,
   CalendarDays,
   Check,
   CheckCircle2,
   ChevronDown,
   Copy,
   FileText,
+  GraduationCap,
   Lightbulb,
   Loader2,
+  MessageSquarePlus,
   Pause,
   Send,
   Sparkles,
@@ -19,19 +22,11 @@ import {
   Volume2,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
-import { AccentCard } from "@/components/ui";
-import {
-  analyzeResponseSchema,
-  type LanguageCode,
-} from "@/lib/analysis";
-import {
-  readAnalysisResult,
-  saveAnalysisResult,
-} from "@/lib/analysis-storage";
-import {
-  type NormalizedAnalysis,
-  type NormalizedStoredAnalysis,
-} from "@/lib/analysis-normalization";
+import { AccentCard, Button } from "@/components/ui";
+import { type LanguageCode } from "@/lib/analysis";
+import { type NormalizedAnalysis } from "@/lib/analysis-normalization";
+import { useYarnContext } from "@/lib/yarn-context";
+import { devTestInputs } from "@/lib/dev-test-inputs";
 
 const languageLabels: Record<LanguageCode, string> = {
   "simple-english": "Simple English",
@@ -75,6 +70,7 @@ const copy: Record<
     clearBody: string;
     needsReview: string;
     switching: string;
+    newYarn: string;
   }
 > = {
   "simple-english": {
@@ -112,6 +108,7 @@ const copy: Record<
     clearBody: "YarnMe did not find any unclear part that needs review.",
     needsReview: "Needs Review",
     switching: "Explaining in Simple English...",
+    newYarn: "Start new yarn",
   },
   pidgin: {
     languageName: "Pidgin",
@@ -148,6 +145,7 @@ const copy: Record<
     clearBody: "YarnMe no see any unclear part wey need review.",
     needsReview: "Needs Review",
     switching: "YarnMe dey translate to Pidgin...",
+    newYarn: "Start new yarn",
   },
   hausa: {
     languageName: "Hausa",
@@ -184,13 +182,8 @@ const copy: Record<
     clearBody: "YarnMe bai ga wani sashe mai bukatar dubawa ba.",
     needsReview: "Needs Review",
     switching: "YarnMe yana fassara zuwa Hausa...",
+    newYarn: "Fara sabon bayani",
   },
-};
-
-type QAMessage = {
-  id: string;
-  question: string;
-  answer: string;
 };
 
 function cleanDisplayItem(item: string) {
@@ -221,32 +214,25 @@ function sourceAppearsIncomplete(analysis: NormalizedAnalysis) {
 }
 
 export function ResultScreen() {
-  const [stored, setStored] = useState<NormalizedStoredAnalysis | null>(null);
-  const [loaded, setLoaded] = useState(false);
-  const [isSwitchingLang, setIsSwitchingLang] = useState(false);
+  const {
+    analysisResult,
+    isAnalyzing,
+    switchLanguage,
+    askQuestion,
+    qaHistory,
+    runAnalysis,
+    resetAll,
+    loadSample,
+  } = useYarnContext();
+
   const [copied, setCopied] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [followUpQuery, setFollowUpQuery] = useState("");
   const [isAsking, setIsAsking] = useState(false);
-  const [qaHistory, setQaHistory] = useState<QAMessage[]>([]);
   const [qaError, setQaError] = useState("");
+  const [isSwitchingLang, setIsSwitchingLang] = useState(false);
   const router = useRouter();
   const synthRef = useRef<SpeechSynthesisUtterance | null>(null);
-
-  useEffect(() => {
-    const timeout = window.setTimeout(() => {
-      const result = readAnalysisResult();
-      if (!result) {
-        setLoaded(true);
-        router.replace("/");
-        return;
-      }
-      setStored(result);
-      setLoaded(true);
-    }, 0);
-
-    return () => window.clearTimeout(timeout);
-  }, [router]);
 
   // Clean up speech on unmount
   useEffect(() => {
@@ -257,10 +243,11 @@ export function ResultScreen() {
     };
   }, []);
 
-  const activeCopy = copy[stored?.language ?? "simple-english"];
+  const currentLang = analysisResult?.language ?? "simple-english";
+  const activeCopy = copy[currentLang];
 
   async function handleLanguageSwitch(newLang: LanguageCode) {
-    if (!stored || stored.language === newLang || isSwitchingLang) return;
+    if (!analysisResult || analysisResult.language === newLang || isSwitchingLang) return;
 
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       window.speechSynthesis.cancel();
@@ -269,30 +256,7 @@ export function ResultScreen() {
 
     setIsSwitchingLang(true);
     try {
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sourceText: stored.sourceText,
-          language: newLang,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to switch language");
-      }
-
-      const payload = await response.json();
-      const parsed = analyzeResponseSchema.safeParse(payload);
-      if (parsed.success) {
-        saveAnalysisResult(parsed.data);
-        const updated = readAnalysisResult();
-        if (updated) {
-          setStored(updated);
-        }
-      }
-    } catch (err) {
-      console.error("Language switch error:", err);
+      await switchLanguage(newLang);
     } finally {
       setIsSwitchingLang(false);
     }
@@ -309,15 +273,15 @@ export function ResultScreen() {
       return;
     }
 
-    if (!stored) return;
+    if (!analysisResult) return;
 
     window.speechSynthesis.cancel();
 
-    // Construct spoken text
+    // Spoken text formulation
     const textToSpeak = [
-      stored.analysis.meaning,
-      stored.analysis.actions.length > 0
-        ? `Actions: ${stored.analysis.actions.join(". ")}`
+      analysisResult.analysis.meaning,
+      analysisResult.analysis.actions.length > 0
+        ? `Actions: ${analysisResult.analysis.actions.join(". ")}`
         : "",
     ]
       .filter(Boolean)
@@ -326,14 +290,13 @@ export function ResultScreen() {
     const utterance = new SpeechSynthesisUtterance(textToSpeak);
     synthRef.current = utterance;
 
-    if (stored.language === "hausa") {
+    if (analysisResult.language === "hausa") {
       utterance.lang = "ha-NG";
     } else {
       utterance.lang = "en-NG";
     }
 
     utterance.rate = 0.95;
-
     utterance.onend = () => setIsSpeaking(false);
     utterance.onerror = () => setIsSpeaking(false);
 
@@ -342,22 +305,22 @@ export function ResultScreen() {
   }
 
   function handleCopy() {
-    if (!stored) return;
+    if (!analysisResult) return;
 
     const sections = [
-      `--- ${activeCopy.title} (${languageLabels[stored.language]}) ---`,
-      `\n${activeCopy.meaning.toUpperCase()}:\n${stored.analysis.meaning}`,
-      stored.analysis.audience
-        ? `\n${activeCopy.audience.toUpperCase()}:\n${stored.analysis.audience}`
+      `--- ${activeCopy.title} (${languageLabels[analysisResult.language]}) ---`,
+      `\n${activeCopy.meaning.toUpperCase()}:\n${analysisResult.analysis.meaning}`,
+      analysisResult.analysis.audience
+        ? `\n${activeCopy.audience.toUpperCase()}:\n${analysisResult.analysis.audience}`
         : "",
-      stored.analysis.actions.length > 0
-        ? `\n${activeCopy.actions.toUpperCase()}:\n${stored.analysis.actions.map((a, i) => `${i + 1}. ${a}`).join("\n")}`
+      analysisResult.analysis.actions.length > 0
+        ? `\n${activeCopy.actions.toUpperCase()}:\n${analysisResult.analysis.actions.map((a, i) => `${i + 1}. ${a}`).join("\n")}`
         : "",
-      stored.analysis.dates.length > 0
-        ? `\n${activeCopy.importantDate.toUpperCase()}:\n${stored.analysis.dates.map((d) => `${d.date}: ${d.context}`).join("\n")}`
+      analysisResult.analysis.dates.length > 0
+        ? `\n${activeCopy.importantDate.toUpperCase()}:\n${analysisResult.analysis.dates.map((d) => `${d.date}: ${d.context}`).join("\n")}`
         : "",
-      stored.analysis.payments.length > 0
-        ? `\n${activeCopy.payments.toUpperCase()}:\n${stored.analysis.payments.map((p) => `${p.amount} - ${p.purpose} (${p.when})`).join("\n")}`
+      analysisResult.analysis.payments.length > 0
+        ? `\n${activeCopy.payments.toUpperCase()}:\n${analysisResult.analysis.payments.map((p) => `${p.amount} - ${p.purpose} (${p.when})`).join("\n")}`
         : "",
     ]
       .filter(Boolean)
@@ -369,38 +332,19 @@ export function ResultScreen() {
     });
   }
 
-  async function askQuestion(questionText: string) {
+  async function handleAsk(questionText: string) {
     const trimmed = questionText.trim();
-    if (!trimmed || !stored || isAsking) return;
+    if (!trimmed || isAsking || !analysisResult) return;
 
     setQaError("");
     setIsAsking(true);
 
     try {
-      const res = await fetch("/api/ask", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sourceText: stored.sourceText,
-          language: stored.language,
-          question: trimmed,
-          meaning: stored.analysis.meaning,
-        }),
-      });
-
-      const data = await res.json();
-      if (res.ok && data.answer) {
-        setQaHistory((prev) => [
-          ...prev,
-          {
-            id: `${Date.now()}`,
-            question: trimmed,
-            answer: data.answer,
-          },
-        ]);
+      const answer = await askQuestion(trimmed);
+      if (answer) {
         setFollowUpQuery("");
       } else {
-        setQaError(data.error || "Could not answer right now.");
+        setQaError("YarnMe could not answer right now. Please try again.");
       }
     } catch {
       setQaError("Connection error. Please try again.");
@@ -409,27 +353,64 @@ export function ResultScreen() {
     }
   }
 
-  if (loaded && !stored) {
+  async function handleLoadSample(index: number) {
+    loadSample(index);
+    router.push("/processing");
+    await runAnalysis(devTestInputs[index].text, "simple-english");
+    router.push("/result");
+  }
+
+  function handleStartNewYarn() {
+    resetAll();
+    router.push("/");
+  }
+
+  // If no analysis is loaded (e.g. accessed directly or refreshed without prior session)
+  if (!analysisResult) {
     return (
       <AppShell header="brand">
-        <section className="py-xl text-center text-body-md text-on-surface-variant">
-          Loading...
+        <section className="flex flex-col items-center justify-center py-xl text-center">
+          <div className="mb-md flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 text-primary">
+            <Lightbulb size={32} />
+          </div>
+          <h1 className="text-headline-lg-mobile font-bold text-primary">
+            No notice explained yet
+          </h1>
+          <p className="mt-xs max-w-[320px] text-body-md text-on-surface-variant">
+            Paste an official notice or pick an example below to see YarnMe in action.
+          </p>
+
+          <div className="mt-xl flex flex-col gap-sm w-full max-w-sm">
+            <Button
+              onClick={handleStartNewYarn}
+              className="h-14 rounded-full text-label-lg font-bold"
+            >
+              <MessageSquarePlus size={20} />
+              <span>Paste a new notice</span>
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => void handleLoadSample(0)}
+              className="h-14 rounded-full text-label-lg font-semibold"
+            >
+              <Building2 size={20} />
+              <span>Try FRSC Public Service notice</span>
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => void handleLoadSample(1)}
+              className="h-14 rounded-full text-label-lg font-semibold"
+            >
+              <GraduationCap size={20} />
+              <span>Try JAMB Education notice</span>
+            </Button>
+          </div>
         </section>
       </AppShell>
     );
   }
 
-  if (!stored) {
-    return (
-      <AppShell header="brand">
-        <section className="py-xl text-center text-body-md text-on-surface-variant">
-          Loading...
-        </section>
-      </AppShell>
-    );
-  }
-
-  const { analysis } = stored;
+  const { analysis } = analysisResult;
   const hasUncertainties = analysis.uncertainties.length > 0;
   const hasAudience = analysis.audience.trim().length > 0;
   const hasIncompleteSource = sourceAppearsIncomplete(analysis);
@@ -440,13 +421,13 @@ export function ResultScreen() {
       <section className="pt-sm pb-xs">
         <div className="flex items-center justify-center gap-2 rounded-2xl bg-surface-container p-1.5 shadow-sm border border-outline-variant/30">
           {(["simple-english", "pidgin", "hausa"] as const).map((lang) => {
-            const isSelected = stored.language === lang;
+            const isSelected = analysisResult.language === lang;
             return (
               <button
                 key={lang}
                 type="button"
-                onClick={() => handleLanguageSwitch(lang)}
-                disabled={isSwitchingLang}
+                onClick={() => void handleLanguageSwitch(lang)}
+                disabled={isSwitchingLang || isAnalyzing}
                 className={`touch-target flex items-center justify-center gap-1.5 rounded-xl px-3.5 py-2 text-label-md font-semibold transition ${
                   isSelected
                     ? "bg-primary text-on-primary shadow-soft"
@@ -786,7 +767,7 @@ export function ResultScreen() {
           </summary>
           <div className="mt-sm border-t border-outline/10 pt-sm">
             <p className="rounded-lg bg-surface-container-low p-sm text-body-md italic text-on-surface-variant whitespace-pre-wrap">
-              &quot;{stored.sourceText}&quot;
+              &quot;{analysisResult.sourceText}&quot;
             </p>
           </div>
         </details>
@@ -827,7 +808,7 @@ export function ResultScreen() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            askQuestion(followUpQuery);
+            void handleAsk(followUpQuery);
           }}
           className="relative mb-md"
         >
@@ -862,7 +843,7 @@ export function ResultScreen() {
             <button
               key={question}
               type="button"
-              onClick={() => askQuestion(question)}
+              onClick={() => void handleAsk(question)}
               disabled={isAsking}
               className="touch-target rounded-full border border-outline/20 bg-surface px-3.5 py-1.5 text-label-sm font-medium text-on-surface transition hover:border-primary hover:bg-primary/5 active:scale-95 disabled:opacity-50"
             >
@@ -891,6 +872,18 @@ export function ResultScreen() {
           </div>
         </section>
       )}
+
+      {/* Start New Yarn CTA */}
+      <div className="mt-lg mb-xl">
+        <Button
+          variant="secondary"
+          onClick={handleStartNewYarn}
+          className="h-14 w-full rounded-full text-label-lg font-bold"
+        >
+          <MessageSquarePlus size={20} />
+          <span>{activeCopy.newYarn}</span>
+        </Button>
+      </div>
     </AppShell>
   );
 }

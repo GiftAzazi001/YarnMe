@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "@/lib/navigation";
 import {
   ArrowRight,
   Building2,
   Check,
   FileCheck,
-  FileText,
   GraduationCap,
   Languages,
   Loader2,
@@ -20,10 +19,7 @@ import {
 import { AppShell } from "@/components/app-shell";
 import { Button } from "@/components/ui";
 import { type LanguageCode } from "@/lib/analysis";
-import {
-  clearAnalysisResult,
-  savePendingAnalysis,
-} from "@/lib/analysis-storage";
+import { useYarnContext } from "@/lib/yarn-context";
 import { devTestInputs } from "@/lib/dev-test-inputs";
 
 const languages: Array<{
@@ -47,11 +43,18 @@ const examples = [
 ];
 
 export function HomeScreen() {
+  const {
+    sourceText,
+    setSourceText,
+    language,
+    setLanguage,
+    isAnalyzing,
+    error,
+    setError,
+    runAnalysis,
+  } = useYarnContext();
+
   const [mode, setMode] = useState<"paste" | "upload">("paste");
-  const [language, setLanguage] = useState<LanguageCode>("simple-english");
-  const [text, setText] = useState("");
-  const [error, setError] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [isReadingFile, setIsReadingFile] = useState(false);
 
@@ -59,17 +62,12 @@ export function HomeScreen() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const router = useRouter();
 
-  useEffect(() => {
-    // Reset submitting state on unmount/mount
-    setIsSubmitting(false);
-  }, []);
-
   function handleUseExample(index: number) {
     const selected = devTestInputs[index] || devTestInputs[0];
-    setText(selected.text);
+    setSourceText(selected.text);
     setUploadedFileName(null);
     setMode("paste");
-    setError("");
+    setError(null);
     if (textareaRef.current) {
       textareaRef.current.focus();
     }
@@ -80,7 +78,7 @@ export function HomeScreen() {
     if (!file) return;
 
     setIsReadingFile(true);
-    setError("");
+    setError(null);
     setUploadedFileName(file.name);
 
     if (
@@ -92,7 +90,7 @@ export function HomeScreen() {
       const reader = new FileReader();
       reader.onload = (e) => {
         const content = (e.target?.result as string) || "";
-        setText(content);
+        setSourceText(content);
         setIsReadingFile(false);
         setMode("paste");
       };
@@ -105,8 +103,7 @@ export function HomeScreen() {
       // For binary files (PDF / images), read file info and notify
       const reader = new FileReader();
       reader.onload = () => {
-        // If image or doc, prompt text or simulate document reading
-        setText(
+        setSourceText(
           `[Uploaded Document: ${file.name}]\nPlease explain the requirements, dates, fees, and instructions from this notice.`,
         );
         setIsReadingFile(false);
@@ -120,10 +117,9 @@ export function HomeScreen() {
     }
   }
 
-  function startYarn() {
-    const trimmedText = text.trim();
-
-    if (!trimmedText) {
+  async function handleStartYarn() {
+    const trimmed = sourceText.trim();
+    if (!trimmed) {
       setError("Please paste your notice first, or tap one of the examples below.");
       if (textareaRef.current) {
         textareaRef.current.focus();
@@ -131,40 +127,19 @@ export function HomeScreen() {
       return;
     }
 
-    setIsSubmitting(true);
-    setError("");
-
-    try {
-      clearAnalysisResult();
-      savePendingAnalysis(trimmedText, language);
-    } catch (e) {
-      console.warn("Storage warning:", e);
+    setError(null);
+    // Navigate to processing screen immediately so user sees the progress ring
+    router.push("/processing");
+    const success = await runAnalysis(trimmed, language);
+    if (success) {
+      router.push("/result");
     }
-
-    // Navigate to processing screen
-    try {
-      router.push("/processing");
-    } catch {
-      // Fallback navigation
-      if (typeof window !== "undefined") {
-        window.location.href = "/processing";
-      }
-    }
-
-    // Safety timeout in case client router is stalled
-    const safetyTimer = window.setTimeout(() => {
-      if (typeof window !== "undefined" && window.location.pathname !== "/processing") {
-        window.location.href = "/processing";
-      }
-    }, 1200);
-
-    return () => window.clearTimeout(safetyTimer);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
-      startYarn();
+      void handleStartYarn();
     }
   }
 
@@ -183,7 +158,7 @@ export function HomeScreen() {
               pidgin: "hausa",
               hausa: "simple-english",
             };
-            setLanguage((current) => nextLangMap[current]);
+            setLanguage(nextLangMap[language]);
           }}
           title={`Switch language (current: ${language})`}
           className="touch-target flex items-center justify-center rounded-full text-primary transition hover:bg-surface-container active:scale-95"
@@ -237,14 +212,14 @@ export function HomeScreen() {
             <textarea
               id="yarn-input"
               ref={textareaRef}
-              value={text}
+              value={sourceText}
               onChange={(event) => {
-                setText(event.target.value);
-                if (error) setError("");
+                setSourceText(event.target.value);
+                if (error) setError(null);
               }}
               onKeyDown={handleKeyDown}
               placeholder="Paste the official notice, message, or memo you want YarnMe to explain..."
-              className={`min-h-[130px] w-full resize-none rounded-lg border-2 bg-white p-sm text-body-md text-on-surface placeholder:text-on-surface-variant/70 focus:outline-none ${
+              className={`min-h-[140px] w-full resize-none rounded-lg border-2 bg-white p-sm text-body-md text-on-surface placeholder:text-on-surface-variant/70 focus:outline-none ${
                 error
                   ? "border-error focus:border-error"
                   : "border-surface-variant focus:border-primary"
@@ -262,7 +237,7 @@ export function HomeScreen() {
                   type="button"
                   onClick={() => {
                     setUploadedFileName(null);
-                    setText("");
+                    setSourceText("");
                   }}
                   className="text-on-surface-variant hover:text-error"
                 >
@@ -376,11 +351,11 @@ export function HomeScreen() {
       </section>
 
       <Button
-        onClick={startYarn}
-        disabled={isSubmitting}
+        onClick={() => void handleStartYarn()}
+        disabled={isAnalyzing}
         className="mt-xl h-16 w-full rounded-xl text-headline-md font-bold disabled:opacity-75"
       >
-        {isSubmitting ? (
+        {isAnalyzing ? (
           <>
             <Loader2 className="animate-spin" size={28} />
             <span>Yarning...</span>
