@@ -1,5 +1,5 @@
-export const DEFAULT_GEMINI_PRIMARY_MODEL = "gemini-3.5-flash-lite";
-export const DEFAULT_GEMINI_FALLBACK_MODEL = "gemini-3.1-flash-lite";
+export const DEFAULT_GEMINI_PRIMARY_MODEL = "gemini-3.1-flash-lite";
+export const DEFAULT_GEMINI_FALLBACK_MODEL = "gemini-flash-latest";
 export const DEFAULT_GEMINI_ADVANCED_MODEL = "gemini-3.7-flash";
 
 export type GeminiModelRole = "primary" | "fallback" | "advanced";
@@ -8,7 +8,11 @@ export type GeminiModelConfig = Record<GeminiModelRole, string>;
 
 function readModelEnv(name: string, fallback: string) {
   if (typeof process !== "undefined" && process.env && process.env[name]) {
-    return process.env[name]?.trim() || fallback;
+    const val = process.env[name]?.trim();
+    // Guard against invalid or deprecated model names in env
+    if (val && !val.includes("3.5-flash-lite") && !val.includes("2.0-flash")) {
+      return val;
+    }
   }
   return fallback;
 }

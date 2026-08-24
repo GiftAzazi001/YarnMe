@@ -634,95 +634,68 @@ export async function handleAnalyzeRequest(body: unknown): Promise<{
   const { sourceText, language } = parsedRequest.data;
   const ai = getGeminiClient();
 
-  try {
-    let model = models.primary;
-    let geminiResponse: GenerateContentResponse;
+  const candidateModels = Array.from(
+    new Set([models.primary, models.fallback, models.advanced, "gemini-flash-latest", "gemini-3.1-flash-lite"]),
+  ).filter(Boolean);
+
+  let lastError: unknown = null;
+  let successfulResponse: {
+    analysis: AnalysisResult;
+    model: string;
+  } | null = null;
+
+  for (let i = 0; i < candidateModels.length; i++) {
+    const currentModel = candidateModels[i];
+    const role: GeminiAttemptOptions["modelRole"] = i === 0 ? "primary" : "fallback";
 
     try {
-      geminiResponse = await generateGeminiContent(
+      const geminiResponse = await generateGeminiContent(
         ai,
-        models.primary,
+        currentModel,
         sourceText,
         language,
-        {
-          modelRole: "primary",
-        },
+        { modelRole: role },
       );
-    } catch (error) {
-      if (
-        error instanceof GeminiRequestError &&
-        models.primary !== models.fallback &&
-        isTransientUpstreamFailure(error.info)
-      ) {
-        logGeminiFallback(models.primary, models.fallback, error.info);
-        model = models.fallback;
-        geminiResponse = await generateGeminiContent(
-          ai,
-          models.fallback,
-          sourceText,
-          language,
-          {
-            modelRole: "fallback",
-          },
-        );
-      } else {
-        throw error;
+
+      const outputText = geminiResponse.text;
+      if (!outputText) {
+        continue;
       }
-    }
 
-    const outputText = geminiResponse.text;
-    if (!outputText) {
-      return {
-        status: 502,
-        data: { error: "YarnMe received an unclear AI response. Please try again." },
+      let aiJson: unknown;
+      try {
+        aiJson = parseJsonText(outputText);
+      } catch {
+        continue;
+      }
+
+      const parsedAnalysis = analysisResultSchema.safeParse(aiJson);
+      if (!parsedAnalysis.success) {
+        continue;
+      }
+
+      successfulResponse = {
+        analysis: parsedAnalysis.data,
+        model: currentModel,
       };
+      break;
+    } catch (err) {
+      lastError = err;
+      console.warn(`[YarnMe] Attempt with model ${currentModel} failed:`, err instanceof Error ? err.message : err);
+      // Continue to next candidate model
     }
+  }
 
-    let aiJson: unknown;
-    try {
-      aiJson = parseJsonText(outputText);
-    } catch {
-      return {
-        status: 502,
-        data: { error: "YarnMe could not read the AI response clearly. Please try again." },
-      };
-    }
-
-    const analysis = analysisResultSchema.safeParse(aiJson);
-    if (!analysis.success) {
-      return {
-        status: 502,
-        data: { error: "YarnMe could not read the AI response clearly. Please try again." },
-      };
-    }
-
-    const groundedAnalysis = applyIncompleteSourceSafeguards(
-      analysis.data,
-      sourceText,
-      language,
-    );
-
-    const response = analyzeResponseSchema.parse({
-      analysis: groundedAnalysis,
-      language,
-      sourceText,
-      model,
-    });
-
-    return {
-      status: 200,
-      data: response,
-    };
-  } catch (error) {
-    if (error instanceof GeminiRequestError) {
+  if (!successfulResponse) {
+    if (lastError instanceof GeminiRequestError) {
       const details = limitDetail(
         [
-          `${error.info.name}: ${error.info.message}`,
-          error.info.upstreamStatusText
-            ? `statusText=${error.info.upstreamStatusText}`
+          `${lastError.info.name}: ${lastError.info.message}`,
+          lastError.info.upstreamStatusText
+            ? `statusText=${lastError.info.upstreamStatusText}`
             : "",
-          typeof error.info.code !== "undefined"
-            ? `code=${String(error.info.code)}`
+          typeof lastError.info.code !== "undefined"
+            ? `code=${String(lastError.info.code)}`
             : "",
         ]
           .filter(Boolean)
@@ -730,10 +703,10 @@ export async function handleAnalyzeRequest(body: unknown): Promise<{
       );
 
       return {
-        status: mapGeminiFailureStatus(error.info),
+        status: mapGeminiFailureStatus(lastError.info),
         data: {
           error: "YarnMe could not explain this right now. Please try again.",
-          upstreamStatus: error.info.upstreamStatus ?? null,
+          upstreamStatus: lastError.info.upstreamStatus ?? null,
           details,
         },
       };
@@ -746,6 +719,24 @@ export async function handleAnalyzeRequest(body: unknown): Promise<{
       },
     };
   }
+
+  const groundedAnalysis = applyIncompleteSourceSafeguards(
+    successfulResponse.analysis,
+    sourceText,
+    language,
+  );
+
+  const response = analyzeResponseSchema.parse({
+    analysis: groundedAnalysis,
+    language,
+    sourceText,
+    model: successfulResponse.model,
+  });
+
+  return {
+    status: 200,
+    data: response,
+  };
 }
 
 export async function handleAskRequest(body: unknown): Promise<{
@@ -777,32 +768,34 @@ export async function handleAskRequest(body: unknown): Promise<{
   const { sourceText, language, question, meaning } = parsedRequest.data;
   const ai = getGeminiClient();
 
-  try {
-    const response = await ai.models.generateContent({
-      model: models.primary,
-      contents: buildAskPrompt(sourceText, question, language, meaning),
-      config: {
-        temperature: 0.2,
-      },
-    });
+  const candidateModels = Array.from(
+    new Set([models.primary, models.fallback, models.advanced, "gemini-flash-latest", "gemini-3.1-flash-lite"]),
+  ).filter(Boolean);
 
-    const answer = response.text?.trim();
-    if (!answer) {
-      return {
-        status: 502,
-        data: { error: "Could not generate an answer right now." },
-      };
+  for (const currentModel of candidateModels) {
+    try {
+      const response = await ai.models.generateContent({
+        model: currentModel,
+        contents: buildAskPrompt(sourceText, question, language, meaning),
+        config: {
+          temperature: 0.2,
+        },
+      });
+
+      const answer = response.text?.trim();
+      if (answer) {
+        return {
+          status: 200,
+          data: { answer },
+        };
+      }
+    } catch (err) {
+      console.warn(`[YarnMe] Ask attempt with model ${currentModel} failed:`, err);
     }
-
-    return {
-      status: 200,
-      data: { answer },
-    };
-  } catch (error) {
-    console.error("[YarnMe] Follow-up question error:", error);
-    return {
-      status: 500,
-      data: { error: "Failed to answer the question right now." },
-    };
   }
+
+  return {
+    status: 502,
+    data: { error: "Could not generate an answer right now. Please try again." },
+  };
 }
