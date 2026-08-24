@@ -1,0 +1,6 @@
+{
+  "name": "YarnMe",
+  "description": "Cultural-contextual explanation assistant that explains complex notices, official documents, and messages in Simple English, Nigerian Pidgin, and Hausa.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
