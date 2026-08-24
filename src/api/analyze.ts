@@ -119,6 +119,38 @@ type GeminiAttemptOptions = {
   modelRole: Exclude<GeminiModelRole, "advanced">;
 };
 
+function getGeminiApiKey(): string | undefined {
+  return (
+    process.env.GEMINI_API_KEY?.trim() ||
+    process.env.GOOGLE_API_KEY?.trim() ||
+    process.env.GOOGLE_GENAI_API_KEY?.trim() ||
+    process.env.API_KEY?.trim()
+  );
+}
+
+function getGeminiClient(): GoogleGenAI {
+  const apiKey = getGeminiApiKey();
+
+  if (apiKey) {
+    return new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
+      },
+    });
+  }
+
+  return new GoogleGenAI({
+    httpOptions: {
+      headers: {
+        "User-Agent": "aistudio-build",
+      },
+    },
+  });
+}
+
 function buildPrompt(sourceText: string, language: LanguageCode) {
   return `You are YarnMe, an expert explanation and translation assistant for Nigerian users.
 Translate and explain the supplied source text into ${languageNames[language]} so the user clearly understands:
@@ -586,20 +618,21 @@ export async function handleAnalyzeRequest(body: unknown): Promise<{
     };
   }
 
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  const apiKey = getGeminiApiKey();
   if (!apiKey) {
     return {
       status: 500,
       data: {
         error: "Gemini is not configured",
-        details: "Missing GEMINI_API_KEY on the server.",
+        details:
+          "Missing GEMINI_API_KEY. Please configure GEMINI_API_KEY in your deployment environment variables or Settings > Secrets.",
       },
     };
   }
 
   const models = getGeminiModelConfig();
   const { sourceText, language } = parsedRequest.data;
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = getGeminiClient();
 
   try {
     let model = models.primary;
@@ -728,20 +761,21 @@ export async function handleAskRequest(body: unknown): Promise<{
     };
   }
 
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  const apiKey = getGeminiApiKey();
   if (!apiKey) {
     return {
       status: 500,
       data: {
         error: "Gemini is not configured",
-        details: "Missing GEMINI_API_KEY on the server.",
+        details:
+          "Missing GEMINI_API_KEY. Please configure GEMINI_API_KEY in your deployment environment variables or Settings > Secrets.",
       },
     };
   }
 
   const models = getGeminiModelConfig();
   const { sourceText, language, question, meaning } = parsedRequest.data;
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = getGeminiClient();
 
   try {
     const response = await ai.models.generateContent({

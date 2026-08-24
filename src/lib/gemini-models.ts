@@ -1,4 +1,4 @@
-export const DEFAULT_GEMINI_PRIMARY_MODEL = "gemini-3.5-flash-lite";
+export const DEFAULT_GEMINI_PRIMARY_MODEL = "gemini-flash-latest";
 export const DEFAULT_GEMINI_FALLBACK_MODEL = "gemini-3.1-flash-lite";
 export const DEFAULT_GEMINI_ADVANCED_MODEL = "gemini-3.7-flash";
 
